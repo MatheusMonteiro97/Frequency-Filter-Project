@@ -1,5 +1,3 @@
-#Nome: Matheus Sant'Ana Monteiro          Matrícula: 190950107
-
 import numpy as np
 import math
 import matplotlib.pyplot as plt

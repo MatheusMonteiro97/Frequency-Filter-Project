@@ -1,0 +1,664 @@
+#Nome: Matheus Sant'Ana Monteiro          Matrícula: 190950107
+
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+import tkinter as tk
+from tkinter import ttk
+import tkinter.font as tkFont
+from tkinter import scrolledtext
+from decimal import Decimal
+
+# Função para calcular a localização dos polos do Butterworth 
+def calcular_polos(nb, wb0):
+    polos_completos = []
+    limite_inferior = 180 / (2 * nb)
+    limite_superior = 180 - (180 / (2 * nb))
+    passo = 180 / nb
+
+    if passo <= 0:
+        raise ValueError("O passo calculado é menor ou igual a zero. Verifique os valores de 'nb'.")
+
+    angulo = np.arange(limite_inferior, limite_superior + passo, passo)
+    if len(angulo) == 0:
+        raise ValueError("Intervalo de ângulos resultou em vetor vazio. Verifique os valores de 'nb'.")
+
+    angulo_rad = np.deg2rad(angulo)
+    polo_real = -np.sin(angulo_rad)
+    polo_imag = np.cos(angulo_rad)
+    polos = wb0 * (polo_real + 1j * polo_imag)
+
+    return polos
+
+# Função para formatar números em notação de engenharia
+def formatar_engenharia(numero, precisao=4):
+    numero_eng = "{:0.{prec}e}".format(numero, prec=precisao)
+    parte_num, exp = numero_eng.split('e')
+    exp = int(exp)
+    exp3 = 3 * (exp // 3)
+    parte_num = float(parte_num) * (10 ** (exp - exp3))
+    return "{:.{prec}f}e{}".format(parte_num, exp3, prec=precisao)
+
+# Função para calcular a função de transferência do Butterworth
+def funcao_transferencia(polos, nb, K):
+    tamanho = len(polos)
+    metade_tamanho = tamanho // 2
+
+    parte_real = polos.real
+    modulo = abs(polos)
+    zeta_butterworth = (-parte_real) / modulo
+        
+    numerador = formatar_engenharia(((modulo[0]**nb))*K)
+    denominador = ""
+
+    if tamanho % 2 == 1:
+        denominador += f"(s + {formatar_engenharia(modulo[tamanho // 2])}) "
+
+    for i in range(metade_tamanho):
+        denominador += f"(s² + {formatar_engenharia(2 * modulo[i] * zeta_butterworth[i])} * s + {formatar_engenharia(modulo[i]**2)}) "
+
+    return numerador, denominador
+
+# Função para calcular a função de transferência do Chebyshev
+def calcular_transferencia_chebyshev(polos_chebyshev, Nc, wp, ec, K):
+
+    numero_polos = len(polos_chebyshev)
+    metade_numero_polos = numero_polos // 2
+
+    parte_real = polos_chebyshev.real
+    magnitude_polos = np.abs(polos_chebyshev)
+    zeta_chebyshev = (-parte_real) / magnitude_polos
+
+    # Calcula o fator de normalização para o denominador em notação de engenharia
+    fator_normalizacao = formatar_engenharia(ec * (2**(Nc-1)))
+
+    # Ajusta o numerador dividindo pelo fator de normalização em notação de engenharia
+    numerador = formatar_engenharia(((K*wp**Nc) / float(fator_normalizacao)))
+    termos_denominador = []
+
+    # Se o número de polos for ímpar, adiciona o termo linear em notação de engenharia
+    if numero_polos % 2 == 1:
+        termos_denominador.append(f"(s + {formatar_engenharia(magnitude_polos[numero_polos // 2])})")
+
+    # Adiciona os termos quadráticos ao denominador em notação de engenharia
+    for i in range(metade_numero_polos):
+        termo = f"(s² + {formatar_engenharia(2 * magnitude_polos[i] * zeta_chebyshev[i])} * s + {formatar_engenharia(magnitude_polos[i]**2)})"
+        termos_denominador.append(termo)
+
+    # Combina todos os termos do denominador em uma única string
+    denominador = " * ".join(termos_denominador)
+
+    return numerador, denominador
+
+# Função para exibir a FT em uma nova janela
+def mostrar_ft(numerador, denominador):
+    ft_window = tk.Toplevel(root)
+    ft_window.title("Função de Transferência")
+    
+    label_numerador = tk.Label(ft_window, text=f" {numerador}", font=('Arial', 12, '    bold'))
+    label_numerador.pack(pady=5)
+    
+    label_divisoria = tk.Label(ft_window, text="─" * 90, font=('Arial', 12))
+    label_divisoria.pack(pady=5)
+    
+    label_denominador = tk.Label(ft_window, text=f" {denominador}", font=('Arial', 12, 'bold'))
+    label_denominador.pack(pady=5)
+
+# Função para plotar os polos
+def plot_polos(polos):
+    plt.figure()
+    
+    # Plotando os polos
+    plt.plot(polos.real, polos.imag, 'rx')
+    
+    # Identificando e plotando os zeros
+    for polo in polos:
+        if polo.imag == 0:  # Se a parte imaginária for zero
+            plt.plot(polo.real, polo.imag, 'go', markersize=10)  # Círculo verde
+    
+    plt.axhline(0, color='black', linewidth=0.5)
+    plt.axvline(0, color='black', linewidth=0.5)
+    plt.title('Localização dos Polos no Plano Complexo')
+    plt.xlabel('Parte Real')
+    plt.ylabel('Parte Imaginária')
+    plt.grid(True)
+    plt.axis('equal')
+    plt.show()
+
+# Função para calcular o diagrama de Bode para o filtro Butterworth
+def calc_bode(nb, eb, wp, K):
+    omega = np.logspace(3, 7, num=1000)
+    modulo_ft_butterworth = 1 / np.sqrt(1 + (eb**2) * (omega / wp)**(2 * nb))
+    ganho = 20 * np.log10(modulo_ft_butterworth*K)
+    fase = -nb * np.arctan2(omega, wp) * (180 / np.pi)
+    return omega, ganho, fase
+
+#Função para plotar o diagrama de Bode do filtro Butterworth
+def plot_bode(omega, ganho, fase):
+    plt.figure()
+
+    # Primeiro subplot - Ganho
+    plt.subplot(2, 1, 1)
+    plt.semilogx(omega, ganho)
+    plt.title('Diagrama de Bode - Butterworth')
+    plt.xlabel('Frequência [rad/s]')
+    plt.ylabel('Ganho [dB]')
+    plt.grid(True)
+    
+    # Encontrando a frequência correspondente a -3,01 dB com interpolação linear
+    idx = np.where(ganho > -3.01)[0][-1]
+    freq_corte = np.interp(-3.01, [ganho[idx], ganho[idx+1]], [omega[idx], omega[idx+1]])
+    ganho_corte = -3.01
+
+    # Desenhando a linha verde
+    plt.axvline(freq_corte, color='green', linestyle='--', label=f'Frequência de corte: {freq_corte:.2f} rad/s\nGanho: {ganho_corte:.2f} dB')
+    plt.legend(loc='best')
+
+    # Segundo subplot - Fase
+    plt.subplot(2, 1, 2)
+    plt.semilogx(omega, fase)
+    plt.xlabel('Frequência [rad/s]')
+    plt.ylabel('Fase [graus]')
+    plt.grid(True)
+
+    plt.show()
+
+#Função para calcular a topologia Sallen-Key para Butterworth
+def sallen_key_butterworth(wb0, topologia, nb, zeta_butterworth, metade_tamanho, r1_ganho, r2_ganho):
+
+    q_butterworth= c_primeira_ordem_butterworth= r_primeira_ordem_butterworth= m_butterworth= n_butterworth= r1_butterworth= r2_butterworth= c1_butterworth= c2_butterworth = None
+   
+    # Cria uma nova janela
+    janela = tk.Toplevel()
+    janela.title("Componentes Calculados - Topologia Sallen-Key")
+
+    texto = ""
+
+    texto += f"\nComponentes do bloco de ganho:\n"
+    texto += f"\nR1:\n {r1_ganho:.0f} Ω\n"
+    texto += f"\nR2:\n {r2_ganho:.0f} Ω\n"
+    texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+    # Cálculo dos componentes caso o filtro seja de ordem par
+    if nb % 2 == 0 and topologia == "Sallen-Key":
+        c1_butterworth = 1 * (10**(-9))
+        q_butterworth = 1 / (2 * zeta_butterworth)
+        n_butterworth = 1.1*(4)*(q_butterworth**2)
+
+        termo_raiz_butterworth = ((2 - (n_butterworth**2 / q_butterworth**2))**2) - 4
+        m_butterworth = (-(2 - (n_butterworth / q_butterworth**2)) + np.sqrt(termo_raiz_butterworth)) / 2
+
+        r2_butterworth = 1/((c1_butterworth)*(wb0)*(np.sqrt((m_butterworth)*(n_butterworth))))
+        r1_butterworth = m_butterworth*r2_butterworth
+        c2_butterworth = n_butterworth*c1_butterworth
+         
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+        for i in range(metade_tamanho):
+            texto += f"{i+1} Q: {q_butterworth[i]:.3f} n: {n_butterworth[i]:.3f} m: {m_butterworth[i]:.3f} R1: {r1_butterworth[i]:.3f} Ω R2: {r2_butterworth[i]:.3f} Ω C1: {c1_butterworth:.3e} F C2: {c2_butterworth[i]:.3e} F\n"
+
+    # Cálculo dos componentes caso o filtro seja de ordem ímpar
+    elif nb % 2 == 1 and topologia == "Sallen-Key":
+        # Cálculo do bloco de 1º ordem
+        c_primeira_ordem_butterworth = 1 * (10**(-9))
+        r_primeira_ordem_butterworth = 1 / (c_primeira_ordem_butterworth * wb0)
+        
+        texto += f"\nComponentes do bloco de 1º ordem:\n"
+        texto += f"\nResistor para bloco de 1º ordem:\n {r_primeira_ordem_butterworth:.3f} Ω\n"
+        texto += f"\nCapacitor para bloco de 1º ordem:\n {c_primeira_ordem_butterworth:.3e} F\n"
+        texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+        # Cálculo dos blocos de 2º ordem
+        c1_butterworth = 1 * (10**(-9))
+        q_butterworth = 1 / (2 * zeta_butterworth)
+        n_butterworth = 1.1*(4)*(q_butterworth**2)
+
+        termo_raiz_butterworth = ((2 - (n_butterworth**2 / q_butterworth**2))**2) - 4
+        m_butterworth = (-(2 - (n_butterworth / q_butterworth**2)) + np.sqrt(termo_raiz_butterworth)) / 2
+
+        r2_butterworth = 1/((c1_butterworth)*(wb0)*(np.sqrt((m_butterworth)*(n_butterworth))))
+        r1_butterworth = m_butterworth*r2_butterworth
+        c2_butterworth = n_butterworth*c1_butterworth
+         
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+        for i in range(metade_tamanho):
+            texto += f"\n{i+1} Q: {q_butterworth[i]:.3f} n: {n_butterworth[i]:.3f} m: {m_butterworth[i]:.3f} R1: {r1_butterworth[i]:.3f} Ω R2: {r2_butterworth[i]:.3f} Ω C1: {c1_butterworth:.3e} F C2: {c2_butterworth[i]:.3e} F\n"
+
+    # Exibe o texto na nova janela
+    label = tk.Label(janela, text=texto, justify=tk.LEFT)
+    label.pack(padx=10, pady=10)
+
+    return q_butterworth, c_primeira_ordem_butterworth, r_primeira_ordem_butterworth, m_butterworth, n_butterworth, r1_butterworth, r2_butterworth, c1_butterworth, c2_butterworth
+
+#Função para calcular a topologia Sallen-Key para o filtro Chebyshev
+def sallen_key_chebyshev(magnitude_polos, topologia, nc, zeta_chebyshev, metade_numero_polos, numero_polos, r1_ganho, r2_ganho):
+
+     # Cria uma nova janela
+    janela = tk.Toplevel()
+    janela.title("Componentes Calculados - Topologia Sallen-Key para filtro Chebyshev")
+
+    texto = ""
+
+    texto += f"\nComponentes do bloco de ganho:\n"
+    texto += f"\nR1:\n {r1_ganho:.0f} Ω\n"
+    texto += f"\nR2:\n {r2_ganho:.0f} Ω\n"
+    texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+    # Inicializa variáveis
+    q_chebyshev = m_chebyshev = n_chebyshev = r1_chebyshev = r2_chebyshev = c1_chebyshev = c2_chebyshev = None
+
+    # Cálculo dos componentes caso o filtro seja de ordem par
+    if nc % 2 == 0 and topologia == "Sallen-Key":
+    
+        c1_chebyshev = 1 * (10**(-9))
+        q_chebyshev = 1 / (2 * zeta_chebyshev)
+        n_chebyshev = 1.1 * (4) * (q_chebyshev**2)
+
+        termo_raiz_chebyshev = ((2 - (n_chebyshev**2 / q_chebyshev**2))**2) - 4
+        m_chebyshev = (-(2 - (n_chebyshev / q_chebyshev**2)) + np.sqrt(termo_raiz_chebyshev)) / 2
+
+        r2_chebyshev = 1 / ((c1_chebyshev) * (magnitude_polos) * (np.sqrt((m_chebyshev) * (n_chebyshev))))
+        r1_chebyshev = m_chebyshev * r2_chebyshev
+        c2_chebyshev = n_chebyshev * c1_chebyshev
+
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+        
+        for i in range(metade_numero_polos):
+            texto += f"{i+1} Q: {q_chebyshev[i]:.3f} n: {n_chebyshev[i]:.3f} m: {m_chebyshev[i]:.3f} R1: {r1_chebyshev[i]:.3f} Ω R2: {r2_chebyshev[i]:.3f} Ω C1: {c1_chebyshev:.3e} F C2: {c2_chebyshev[i]:.3e} F\n"
+
+        
+    # Cálculo dos componentes caso o filtro seja de ordem ímpar
+    elif nc % 2 == 1 and topologia == "Sallen-Key":
+        K = float(entry_k.get())
+        # Cálculo do bloco de 1º ordem
+        w0real = math.ceil(numero_polos / 2)
+        zeta_real = magnitude_polos[w0real]
+        c_primeira_ordem_chebyshev = 1 * (10**(-9))
+        r_primeira_ordem_chebyshev = 1 / (c_primeira_ordem_chebyshev * zeta_real)
+
+        texto += f"\nComponentes do bloco de 1º ordem:\n"
+        texto += f"\nResistor para bloco de 1º ordem:\n {r_primeira_ordem_chebyshev:.3f} Ω\n"
+        texto += f"\nCapacitor para bloco de 1º ordem:\n {c_primeira_ordem_chebyshev:.3e} F\n"
+        texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+        # Cálculo do bloco de 2º ordem
+        c1_chebyshev = 1 * (10**(-9))
+        q_chebyshev = 1 / (2 * zeta_chebyshev)
+        n_chebyshev = 1.1 * (4) * (q_chebyshev**2)
+
+        termo_raiz_chebyshev = ((2 - (n_chebyshev**2 / q_chebyshev**2))**2) - 4
+        m_chebyshev = (-(2 - (n_chebyshev / q_chebyshev**2)) + np.sqrt(termo_raiz_chebyshev)) / 2
+
+        r2_chebyshev = 1 / ((c1_chebyshev) * (magnitude_polos) * (np.sqrt((m_chebyshev) * (n_chebyshev))))
+        r1_chebyshev = m_chebyshev * r2_chebyshev
+        c2_chebyshev = n_chebyshev * c1_chebyshev
+
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+
+        for i in range(metade_numero_polos):
+            texto += f"\n{i+1} Q: {q_chebyshev[i]:.3f} n: {n_chebyshev[i]:.3f} m: {m_chebyshev[i]:.3f}  R1: {r1_chebyshev[i]:.3f} Ω R2: {r2_chebyshev[i]:.3f} Ω C1: {c1_chebyshev:.3e} F C2: {c2_chebyshev[i]:.3e} F\n"
+            
+        # Exibe o texto na nova janela
+        label = tk.Label(janela, text=texto, justify=tk.LEFT)
+        label.pack(padx=10, pady=10)
+
+        # Retorna os valores para ordem ímpar
+        return q_chebyshev, m_chebyshev, n_chebyshev, r_primeira_ordem_chebyshev, None, c_primeira_ordem_chebyshev, None
+        
+   
+    # Retorna os valores calculados
+    return q_chebyshev, m_chebyshev, n_chebyshev, r1_chebyshev, r2_chebyshev, c1_chebyshev, c2_chebyshev
+
+#Função para calcular a topologia MFB para o filtro Butterworth
+def mfb_butterworth(wb0, topologia, nb, zeta_butterworth, metade_tamanho, r1_ganho, r2_ganho):
+
+    q_mfb_butterworth = m_mfb_butterworth = n_mfb_butterworth = r1_mfb_butterworth = r2_mfb_butterworth = r3_mfb_butterworth = c_mfb_primeira_ordem_butterworth = r_mfb_primeira_ordem_butterworth = c1_mfb_butterworth = c2_mfb_butterworth = None
+
+      # Cria uma nova janela
+    janela = tk.Toplevel()
+    janela.title("Componentes Calculados - Topologia MFB")
+
+    texto = ""
+
+    texto += f"\nComponentes do bloco de ganho:\n"
+    texto += f"\nR1:\n {r1_ganho:.0f} Ω\n"
+    texto += f"\nR2:\n {r2_ganho:.0f} Ω\n"
+    texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+    # Cálculo dos componentes caso o filtro seja de ordem par
+    if nb % 2 == 0 and topologia == "MFB":
+
+        c1_mfb_butterworth = 1 * (10**(-9))
+        q_mfb_butterworth = 1 / (2 * zeta_butterworth)
+        n_mfb_butterworth = ((4.1)*(2)*(q_mfb_butterworth**2))
+        g = 2
+
+        parte1 = (2 / g) - (n_mfb_butterworth / (g**2 * q_mfb_butterworth**2))
+        parte2 = np.sqrt(parte1**2 - (4 / g**2))
+        m_mfb_butterworth = (-parte1 + parte2) / 2
+
+        r2_mfb_butterworth = 1/((c1_mfb_butterworth)*(wb0)*(np.sqrt((m_mfb_butterworth)*(n_mfb_butterworth))))
+        r3_mfb_butterworth = ((m_mfb_butterworth)*(r2_mfb_butterworth))
+        r1_mfb_butterworth = ((r2_mfb_butterworth)/1)
+        c2_mfb_butterworth = (n_mfb_butterworth * c1_mfb_butterworth)
+         
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+        for i in range(metade_tamanho):
+            texto += f"{i+1} Q: {q_mfb_butterworth[i]:.3f} n: {n_mfb_butterworth[i]:.3f} m: {m_mfb_butterworth[i]:.3f} R1: {r1_mfb_butterworth[i]:.3f} Ω R2: {r2_mfb_butterworth[i]:.3f} Ω R3: {r3_mfb_butterworth[i]:.3f} Ω C1: {c1_mfb_butterworth:.3e} F C2: {c2_mfb_butterworth[i]:.3e} F\n"
+    
+    # Cálculo dos componentes caso o filtro seja de ordem ímpar
+    elif nb % 2 == 1 and topologia == "MFB":
+
+        # Cálculo do bloco de 1º ordem
+        c_mfb_primeira_ordem_butterworth = 1 * (10**(-9))
+        r_mfb_primeira_ordem_butterworth = 1 / (c_mfb_primeira_ordem_butterworth * wb0)
+        
+        texto += f"\nComponentes do bloco de 1º ordem:\n"
+        texto += f"\nResistor para bloco de 1º ordem:\n {r_mfb_primeira_ordem_butterworth:.3f} Ω\n"
+        texto += f"\nCapacitor para bloco de 1º ordem:\n {c_mfb_primeira_ordem_butterworth:.3e} F\n"
+        texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+        # Cálculo dos blocos de 2º ordem
+        c1_mfb_butterworth = 1 * (10**(-9))
+        q_mfb_butterworth = 1 / (2 * zeta_butterworth)
+        n_mfb_butterworth = ((4.1)*(2)*(q_mfb_butterworth**2))
+        g = 2
+
+        parte1 = (2 / g) - (n_mfb_butterworth / (g**2 * q_mfb_butterworth**2))
+        parte2 = np.sqrt(parte1**2 - (4 / g**2))
+        m_mfb_butterworth = (-parte1 + parte2) / 2
+
+        r2_mfb_butterworth = 1/((c1_mfb_butterworth)*(wb0)*(np.sqrt((m_mfb_butterworth)*(n_mfb_butterworth))))
+        r3_mfb_butterworth = ((m_mfb_butterworth)*(r2_mfb_butterworth))
+        r1_mfb_butterworth = ((r2_mfb_butterworth)/1)
+        c2_mfb_butterworth = (n_mfb_butterworth * c1_mfb_butterworth)
+         
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+
+        for i in range(metade_tamanho):
+            texto += f"\n{i+1} Q: {q_mfb_butterworth[i]:.3f} n: {n_mfb_butterworth[i]:.3f} m: {m_mfb_butterworth[i]:.3f} R1: {r1_mfb_butterworth[i]:.3f} Ω R2: {r2_mfb_butterworth[i]:.3f} Ω R3: {r3_mfb_butterworth[i]:.3f} Ω C1: {c1_mfb_butterworth:.3e} F C2: {c2_mfb_butterworth[i]:.3e} F\n"
+
+    # Exibe o texto na nova janela
+    label = tk.Label(janela, text=texto, justify=tk.LEFT)
+    label.pack(padx=10, pady=10)
+
+    return q_mfb_butterworth, c_mfb_primeira_ordem_butterworth, r_mfb_primeira_ordem_butterworth, m_mfb_butterworth, n_mfb_butterworth, r1_mfb_butterworth, r2_mfb_butterworth, r3_mfb_butterworth, c1_mfb_butterworth, c2_mfb_butterworth
+    
+#Função para calcular a topologia MFB para o filtro Chebyshev
+def mfb_chebyshev(magnitude_polos, topologia, nc, zeta_chebyshev, metade_numero_polos, numero_polos, r1_ganho, r2_ganho):
+
+     # Cria uma nova janela
+    janela = tk.Toplevel()
+    janela.title("Componentes Calculados - Topologia MFB para filtro Chebyshev")
+
+    texto = ""
+    texto += f"\nComponentes do bloco de ganho:\n"
+    texto += f"\nR1:\n {r1_ganho:.0f} Ω\n"
+    texto += f"\nR2:\n {r2_ganho:.0f} Ω\n"
+    texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+    # Inicializa variáveis
+    q_mfb_chebyshev = m_mfb_chebyshev = n_mfb_chebyshev = r1_mfb_chebyshev = r2_mfb_chebyshev = r3_mfb_chebyshev = c1_mfb_chebyshev = c2_mfb_chebyshev = c_primeira_ordem_mfb = r_primeira_ordem_mfb = None
+
+    # Cálculo dos componentes caso o filtro seja de ordem par
+    if nc % 2 == 0 and topologia == "MFB":
+    
+        g_chebyshev = 2
+        c1_mfb_chebyshev = 1 * (10**(-9))
+        q_mfb_chebyshev = 1 / (2 * zeta_chebyshev)
+        n_mfb_chebyshev = ((4.1)*(2)*(q_mfb_chebyshev**2))
+
+        parte1_chebyshev = (2 / g_chebyshev) - (n_mfb_chebyshev / (g_chebyshev**2 * q_mfb_chebyshev**2))
+        parte2_chebyshev = np.sqrt(parte1_chebyshev**2 - (4 / g_chebyshev**2))
+        m_mfb_chebyshev = (-parte1_chebyshev + parte2_chebyshev) / 2
+
+        r2_mfb_chebyshev = 1 / ((c1_mfb_chebyshev) * (magnitude_polos) * (np.sqrt((m_mfb_chebyshev) * (n_mfb_chebyshev))))
+        r1_mfb_chebyshev = ((r2_mfb_chebyshev)/(1))  #K unitário
+        r3_mfb_chebyshev = ((m_mfb_chebyshev)*(r2_mfb_chebyshev))
+        c2_mfb_chebyshev = n_mfb_chebyshev * c1_mfb_chebyshev
+
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+        
+        for i in range(metade_numero_polos):
+            texto += f"{i+1} Q: {q_mfb_chebyshev[i]:.3f} n: {n_mfb_chebyshev[i]:.3f} m: {m_mfb_chebyshev[i]:.3f} R1: {r1_mfb_chebyshev[i]:.3f} Ω R2: {r2_mfb_chebyshev[i]:.3f} Ω R3: {r3_mfb_chebyshev[i]:.3f} Ω C1: {c1_mfb_chebyshev:.3e} F C2: {c2_mfb_chebyshev[i]:.3e} F\n"
+
+        
+    # Cálculo dos componentes caso o filtro seja de ordem ímpar
+    if nc % 2 == 1 and topologia == "MFB":
+
+        #Bloco de 1º ordem
+        w0real_mfb = math.ceil(numero_polos / 2)
+        zeta_real_mfb = magnitude_polos[w0real_mfb]
+        c_primeira_ordem_mfb = 1 * (10**(-9))
+        r_primeira_ordem_mfb = 1 / (c_primeira_ordem_mfb * zeta_real_mfb)
+
+        texto += f"\nComponentes do bloco de 1º ordem:\n"
+        texto += f"\nResistor para bloco de 1º ordem:\n {r_primeira_ordem_mfb:.3f} Ω\n"
+        texto += f"\nCapacitor para bloco de 1º ordem:\n {c_primeira_ordem_mfb:.3e} F\n"
+        texto += f"\n-----------------------------------------------------------------------------------------------\n"
+
+        #Blocos de 2º ordem
+        g_chebyshev = 2
+        c1_mfb_chebyshev = 1 * (10**(-9))
+        q_mfb_chebyshev = 1 / (2 * zeta_chebyshev)
+        n_mfb_chebyshev = ((4.1)*(2)*(q_mfb_chebyshev**2))
+
+        parte1_chebyshev = (2 / g_chebyshev) - (n_mfb_chebyshev / (g_chebyshev**2 * q_mfb_chebyshev**2))
+        parte2_chebyshev = np.sqrt(parte1_chebyshev**2 - (4 / g_chebyshev**2))
+        m_mfb_chebyshev = (-parte1_chebyshev + parte2_chebyshev) / 2
+
+        r2_mfb_chebyshev = 1 / ((c1_mfb_chebyshev) * (magnitude_polos) * (np.sqrt((m_mfb_chebyshev) * (n_mfb_chebyshev))))
+        r1_mfb_chebyshev = ((r2_mfb_chebyshev)/(1))  #K unitário
+        r3_mfb_chebyshev = ((m_mfb_chebyshev)*(r2_mfb_chebyshev))
+        c2_mfb_chebyshev = n_mfb_chebyshev * c1_mfb_chebyshev
+
+        texto += "\nComponentes para cada bloco de 2º ordem:\n"
+        
+        for i in range(metade_numero_polos):
+            texto += f"\n{i+1} Q: {q_mfb_chebyshev[i]:.3f} n: {n_mfb_chebyshev[i]:.3f} m: {m_mfb_chebyshev[i]:.3f} R1: {r1_mfb_chebyshev[i]:.3f} Ω R2: {r2_mfb_chebyshev[i]:.3f} Ω R3: {r3_mfb_chebyshev[i]:.3f} Ω C1: {c1_mfb_chebyshev:.3e} F C2: {c2_mfb_chebyshev[i]:.3e} F\n"
+
+# Exibe o texto na nova janela
+    label = tk.Label(janela, text=texto, justify=tk.LEFT)
+    label.pack(padx=10, pady=10)
+
+    return q_mfb_chebyshev, c_primeira_ordem_mfb, r_primeira_ordem_mfb, m_mfb_chebyshev, n_mfb_chebyshev, r1_mfb_chebyshev, r2_mfb_chebyshev, r3_mfb_chebyshev, c1_mfb_chebyshev, c2_mfb_chebyshev
+        
+# Função para calcular o diagrama de Bode para o filtro Chebyshev
+
+def calc_bode_chebyshev(nc, ec, wp, K):
+    omega1 = np.logspace(1, 7, num=1000)
+    omega_wp_ratio = omega1 / wp
+    
+    # Inicializa o ganho
+    G_chebyshev = np.zeros_like(omega1)
+    
+    # Para omega < wp
+    mask_lt_wp = omega1 < wp
+    omega_lt_wp = omega1[mask_lt_wp]
+    omega_wp_ratio_lt_wp = omega_lt_wp / wp
+    
+    # Garante que omega_wp_ratio_lt_wp esteja no intervalo [-1, 1]
+    omega_wp_ratio_lt_wp = np.clip(omega_wp_ratio_lt_wp, -1, 1)
+    G_chebyshev[mask_lt_wp] = 1 / (np.sqrt(1 + (ec**2) * np.cos(nc * np.arccos(omega_wp_ratio_lt_wp))**2))
+    
+    # Para omega >= wp
+    mask_ge_wp = omega1 >= wp
+    omega_ge_wp = omega1[mask_ge_wp]
+    omega_wp_ratio_ge_wp = omega_ge_wp / wp
+    
+    # Para evitar erros em arctanh, garante que o argumento esteja no intervalo (-1, 1)
+    term_arctanh = np.sqrt(np.maximum((omega_ge_wp / wp)**2 - 1, 0))  # Usa maximum para evitar valores negativos
+    term_arctanh = np.clip(term_arctanh, -0.999999, 0.999999)  # Limita o intervalo para evitar erros em arctanh
+    G_chebyshev[mask_ge_wp] = 1 / (np.sqrt(1 + (ec**2) * np.cosh(nc * np.arccosh(omega_wp_ratio_ge_wp))**2))
+    
+    # Calcula o ganho em dB
+    ganho = 20 * np.log10(G_chebyshev*K)
+    
+    # Calcula a fase
+    fase = -nc * np.arctan2(omega1, wp) * (180 / np.pi)
+   
+    return omega1, ganho, fase
+
+# Função para plotar o diagrama de Bode do filtro Chebyshev
+def plot_bode1(omega1, ganho1, fase1, wp):
+    plt.figure()
+
+    # Primeiro subplot - Ganho
+    plt.subplot(2, 1, 1)
+    plt.semilogx(omega1, ganho1)
+    plt.title('Diagrama de Bode - Chebyshev')
+    plt.xlabel('Frequência [rad/s]')
+    plt.ylabel('Ganho [dB]')
+    plt.grid(True)
+    
+    # Adiciona linha tracejada verde em wp
+    plt.axvline(wp, color='green', linestyle='--', label=f'Frequência wp: {wp:.2f} rad/s')
+    plt.legend(loc='best')
+
+    # Segundo subplot - Fase
+    plt.subplot(2, 1, 2)
+    plt.semilogx(omega1, fase1)
+    plt.xlabel('Frequência [rad/s]')
+    plt.ylabel('Fase [graus]')
+    plt.grid(True)
+
+    plt.show()
+
+# Função para calcular a localização dos polos do Chebyshev
+def calcular_polos_chebyshev(nc, ec, wp):
+    indices_ordem = np.linspace(1, nc, nc)
+    angulos_polos = (2 * indices_ordem - 1) * np.pi / (2 * nc)
+    parte_real_polos = -np.sin(angulos_polos) * np.sinh(np.arcsinh(1 / ec) / nc)
+    parte_imaginaria_polos = np.cos(angulos_polos) * np.cosh(np.arcsinh(1 / ec) / nc)
+    polos_filtro_chebyshev = wp*(parte_real_polos + 1j * parte_imaginaria_polos)
+    return polos_filtro_chebyshev
+
+#Função para calcular o bloco de ganho
+def bloco_ganho(K):
+    
+    r1_ganho = 1000
+    r2_ganho = (K-1)*(r1_ganho)
+
+
+    return r1_ganho, r2_ganho
+
+# Função para calcular e plotar os resultados com base na entrada do usuário
+def calcular():
+    Amax = float(entry_amax.get())
+    Amin = float(entry_amin.get())
+    fp = float(entry_fp.get())
+    fs = float(entry_fs.get())
+    K = float(entry_k.get())
+    tipo_de_filtro = combobox_tipo_filtro.get().upper()
+    topologia = combobox_topologia.get()
+
+    wp = 2 * np.pi * fp
+    ws = 2 * np.pi * fs
+
+    # Caso o usuário escolha Butterworth
+    if tipo_de_filtro == "BUTTERWORTH":
+        eb = float(math.sqrt((10**(Amax/10)-1)))
+        nb = float((math.log((10**(Amin/10)-1)/(eb**2)))/(2*(math.log(ws/wp))))
+        nb = math.ceil(nb)
+        wb0 = wp/(eb**(1/nb))
+        
+        polos = calcular_polos(nb, wb0)
+        numerador, denominador = funcao_transferencia(polos, nb, K)
+        mostrar_ft(numerador, denominador)
+        plot_polos(polos)
+        omega, ganho, fase = calc_bode(nb, eb, wp, K)
+        plot_bode(omega, ganho, fase)
+
+        # Definindo variáveis
+
+        zeta_butterworth = (-polos.real) / abs(polos)
+        metade_tamanho = len(polos) // 2
+        r1_ganho = 1000
+        r2_ganho = (K-1)*(r1_ganho)
+
+
+        q_butterworth, c_primeira_ordem_butterworth, r_primeira_ordem_butterworth, n_butterworth, m_butterworth, r1_butterworth, r2_butterworth, c1_butterworth, c2_butterworth = sallen_key_butterworth(wb0, topologia, nb, zeta_butterworth, metade_tamanho, r1_ganho, r2_ganho)
+        q_mfb_butterworth, c_mfb_primeira_ordem_butterworth, r_mfb_primeira_ordem_butterworth, m_mfb_butterworth, n_mfb_butterworth, r1_mfb_butterworth, r2_mfb_butterworth, r3_mfb_butterworth, c1_mfb_butterworth, c2_mfb_butterworth = mfb_butterworth(wb0, topologia, nb, zeta_butterworth, metade_tamanho, r1_ganho, r2_ganho)
+
+    # Caso o usuário escolha Chebyshev
+    elif tipo_de_filtro == "CHEBYSHEV":
+        ec = float(math.sqrt((10**(Amax/10)-1)))
+        nc = float(math.acosh(math.sqrt(10**(Amin / 10) - 1) / ec) / math.acosh(ws / wp))
+        nc = math.ceil(nc)
+
+        polos_chebyshev = calcular_polos_chebyshev(nc, ec, wp)
+        numerador, denominador = calcular_transferencia_chebyshev(polos_chebyshev, nc, wp, ec, K)
+        mostrar_ft(numerador, denominador)
+        plot_polos(polos_chebyshev)
+
+        omega1, ganho1, fase1 = calc_bode_chebyshev(nc, ec, wp, K)
+        plot_bode1(omega1, ganho1, fase1, wp)
+
+        # Definindo variáveis para a função sallen_key_chebyshev
+        magnitude_polos = np.abs(polos_chebyshev)
+        zeta_chebyshev = (-polos_chebyshev.real) / magnitude_polos
+        metade_numero_polos = len(polos_chebyshev) // 2
+        numero_polos = len(polos_chebyshev)
+        r1_ganho = 1000
+        r2_ganho = (K-1)*(r1_ganho)
+
+        q_chebyshev, m_chebyshev, n_chebyshev, r1_chebyshev, r2_chebyshev, c1_chebyshev, c2_chebyshev = sallen_key_chebyshev(magnitude_polos, topologia, nc, zeta_chebyshev, metade_numero_polos, numero_polos, r1_ganho, r2_ganho)
+
+        q_mfb_chebyshev, c_primeira_ordem_mfb, r_primeira_ordem_mfb, m_mfb_chebyshev, n_mfb_chebyshev, r1_mfb_chebyshev, r2_mfb_chebyshev, r3_mfb_chebyshev, c1_mfb_chebyshev, c2_mfb_chebyshev = mfb_chebyshev(magnitude_polos, topologia, nc, zeta_chebyshev, metade_numero_polos, numero_polos, r1_ganho, r2_ganho)
+    r1_ganho, r2_ganho = bloco_ganho(K)
+    print(f"\nTopologia escolhida: {topologia}")
+
+# Interface gráfica
+root = tk.Tk()
+root.title("Calculadora de Filtro")
+
+# Entrada de Amax
+label_amax = tk.Label(root, text="Amax (dB):")
+label_amax.grid(row=0, column=0, padx=5, pady=5)
+entry_amax = tk.Entry(root)
+entry_amax.grid(row=0, column=1, padx=5, pady=5)
+
+# Entrada de Amin
+label_amin = tk.Label(root, text="Amin (dB):")
+label_amin.grid(row=1, column=0, padx=5, pady=5)
+entry_amin = tk.Entry(root)
+entry_amin.grid(row=1, column=1, padx=5, pady=5)
+
+# Entrada de Fp
+label_fp = tk.Label(root, text="Fp (Hz):")
+label_fp.grid(row=2, column=0, padx=5, pady=5)
+entry_fp = tk.Entry(root)
+entry_fp.grid(row=2, column=1, padx=5, pady=5)
+
+# Entrada de Fs
+label_fs = tk.Label(root, text="Fs (Hz):")
+label_fs.grid(row=3, column=0, padx=5, pady=5)
+entry_fs = tk.Entry(root)
+entry_fs.grid(row=3, column=1, padx=5, pady=5)
+
+# Entrada de K
+label_k = tk.Label(root, text="K:")
+label_k.grid(row=4, column=0, padx=5, pady=5)
+entry_k = tk.Entry(root)
+entry_k.grid(row=4, column=1, padx=5, pady=5)
+
+
+# Tipo de filtro
+label_tipo_filtro = tk.Label(root, text="Tipo de Filtro:")
+label_tipo_filtro.grid(row=5, column=0, padx=5, pady=5)
+combobox_tipo_filtro = ttk.Combobox(root, values=["Butterworth", "Chebyshev"])
+combobox_tipo_filtro.grid(row=5, column=1, padx=5, pady=5)
+combobox_tipo_filtro.current(0)
+
+# Topologia do filtro
+label_topologia = tk.Label(root, text="Topologia:")
+label_topologia.grid(row=6, column=0, padx=5, pady=5)
+combobox_topologia = ttk.Combobox(root, values=["Sallen-Key", "MFB"])
+combobox_topologia.grid(row=6, column=1, padx=5, pady=5)
+combobox_topologia.current(0)
+
+# Botão para calcular
+
+button_calcular = tk.Button(root, text="Calcular", command=calcular)
+button_calcular.grid(row=7, column=0, columnspan=2, padx=5, pady=10)
+
+root.mainloop()
